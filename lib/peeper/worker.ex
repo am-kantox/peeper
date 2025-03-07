@@ -8,6 +8,13 @@ defmodule Peeper.Worker do
     {supervisor, opts} = Keyword.pop!(opts, :supervisor)
     {opts, []} = Keyword.pop!(opts, :opts)
 
+    opts =
+      with true <- Keyword.has_key?(opts, :name),
+           name when not is_nil(name) <-
+             opts |> Keyword.fetch!(:name) |> Peeper.gen_server_name(),
+           do: Keyword.put(opts, :name, name),
+           else: (_ -> opts)
+
     GenServer.start_link(__MODULE__, %{impl: impl, supervisor: supervisor}, opts)
   end
 

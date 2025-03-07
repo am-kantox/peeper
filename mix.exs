@@ -2,7 +2,7 @@ defmodule Peeper.MixProject do
   use Mix.Project
 
   @app :peeper
-  @version "1.8.0"
+  @version "0.1.0"
 
   def project do
     [
