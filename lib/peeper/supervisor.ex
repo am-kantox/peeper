@@ -22,8 +22,8 @@ defmodule Peeper.Supervisor do
 
     Supervisor.init(children,
       strategy: :one_for_one,
-      max_restarts: 1_000,
-      max_seconds: 1,
+      max_restarts: 3,
+      max_seconds: 5,
       auto_shutdown: :never
     )
   end

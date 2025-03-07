@@ -4,17 +4,27 @@ defmodule Peeper.Worker do
   use GenServer, restart: :permanent
 
   def start_link(opts) do
-    {supervisor, opts} = Keyword.pop!(opts, :supervisor)
     {impl, opts} = Keyword.pop!(opts, :impl)
+    {supervisor, opts} = Keyword.pop!(opts, :supervisor)
     {opts, []} = Keyword.pop!(opts, :opts)
 
     GenServer.start_link(__MODULE__, %{impl: impl, supervisor: supervisor}, opts)
   end
 
   @impl GenServer
-  def init(state) do
-    {:ok, state, {:continue, :__init__}}
+  def init(state), do: {:ok, state, {:continue, :__init__}}
+
+  @impl GenServer
+  def code_change(old_vsn, state, extra) when state.impl_funs.code_change? do
+    old_vsn
+    |> state.impl.code_change(state.state, extra)
+    |> store_state(state)
   end
+
+  def code_change(old_vsn, state, extra), do: Peeper.Empty.code_change(old_vsn, state, extra)
+
+  @impl GenServer
+  def format_status(status), do: status
 
   @impl GenServer
   def handle_continue(:__init__, state) do
@@ -25,17 +35,41 @@ defmodule Peeper.Worker do
 
     impl_funs =
       %{
+        code_change?: function_exported?(state.impl, :code_change, 3),
+        # format_status?: function_exported?(state.impl, :format_status, 1),
         handle_call?: function_exported?(state.impl, :handle_call, 3),
         handle_cast?: function_exported?(state.impl, :handle_cast, 2),
+        handle_continue?: function_exported?(state.impl, :handle_continue, 2),
         handle_info?: function_exported?(state.impl, :handle_info, 2),
-        handle_continue?: function_exported?(state.impl, :handle_continue, 2)
+        init?: function_exported?(state.impl, :init, 1),
+        terminate?: function_exported?(state.impl, :terminate, 2)
       }
-      |> IO.inspect(label: "IMPLS")
 
     state =
       state
       |> Map.put(:state, cached_state)
       |> Map.put(:impl_funs, impl_funs)
+
+    state =
+      case handle_init(state) do
+        {:ok, state} ->
+          state
+
+        other ->
+          message = """
+          function init/1 required by behaviour Peeper.GenServer (in module #{inspect(state.impl)}) \
+          differs from `init/1` callback in GenServer. It cannot return anything but `{:ok, new_state}` tuple.
+
+          We are to discard the value returned and make no modifications to the state, please make sure \
+          you either return an `{:ok, new_state}` tuple from Peeper.GenServer.init/1 callback or switch \
+          back to the bare GenServer if you really need to return anything else.
+
+          Got: #{inspect(other)}
+          """
+
+          IO.warn(message, __ENV__)
+          state
+      end
 
     {:noreply, state, {:continue, :__monitor_state__}}
   end
@@ -57,6 +91,14 @@ defmodule Peeper.Worker do
 
   def handle_continue(_continue_arg, state), do: {:noreply, state}
 
+  defp handle_init(state) when state.impl_funs.init? do
+    state.state
+    |> state.impl.init()
+    |> store_state(state)
+  end
+
+  defp handle_init(state), do: {:ok, state}
+
   @impl GenServer
   def handle_info({:DOWN, _ref, :process, from, _reason}, state) do
     case Peeper.Supervisor.state(state.supervisor) do
@@ -71,7 +113,7 @@ defmodule Peeper.Worker do
     |> store_state(state)
   end
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  def handle_info(msg, state), do: Peeper.Empty.handle_info(msg, state)
 
   @impl GenServer
   def handle_call(:__state__, {from, _}, state) do
@@ -87,10 +129,7 @@ defmodule Peeper.Worker do
     |> store_state(state)
   end
 
-  def handle_call(msg, from, state) do
-    IO.inspect(msg: msg, from: from, state: state)
-    {:reply, :not_implemented, state}
-  end
+  def handle_call(msg, from, state), do: Peeper.Empty.handle_call(msg, from, state)
 
   @impl GenServer
   def handle_cast(msg, state) when state.impl_funs.handle_cast? do
@@ -99,7 +138,15 @@ defmodule Peeper.Worker do
     |> store_state(state)
   end
 
-  def handle_cast(_msg, state), do: {:noreply, state}
+  def handle_cast(msg, state), do: Peeper.Empty.handle_cast(msg, state)
+
+  @impl GenServer
+  def terminate(reason, state) when state.impl_funs.terminate?,
+    do: state.impl.terminate(reason, state.state)
+
+  def terminate(reason, state), do: Peeper.Empty.terminate(reason, state)
+
+  #############################################################################
 
   defp store_state({:noreply, state}, worker_state),
     do: {:noreply, do_store_state(worker_state, state)}
@@ -119,7 +166,13 @@ defmodule Peeper.Worker do
   defp store_state({:stop, reason, reply, state}, worker_state),
     do: {:stop, reason, reply, do_store_state(worker_state, state)}
 
-  defp store_state(_worker_state, unknown),
+  defp store_state({:ok, state}, worker_state),
+    do: {:ok, do_store_state(worker_state, state)}
+
+  defp store_state({:error, reason}, _worker_state),
+    do: {:error, reason}
+
+  defp store_state(unknown, _worker_state),
     do: unknown
 
   defp do_store_state(%{state: state} = worker_state, state), do: worker_state

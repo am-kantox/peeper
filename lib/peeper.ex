@@ -3,21 +3,25 @@ defmodule Peeper do
   Documentation for `Peeper`.
   """
 
-  use Peeper.GenServer
+  defmodule Empty do
+    @moduledoc false
+    use GenServer
 
-  def handle_call(:state, _from, state), do: {:reply, state, state}
-
-  def handle_call(:raise, _from, _state) do
-    raise "boom"
+    @impl GenServer
+    def init(_), do: :ignore
   end
 
-  def handle_call(msg, {from, _}, state) do
-    {:reply, [msg: msg, from: from, state: state + 1], state + 1}
+  def call(pid, msg, timeout \\ 5_000) do
+    GenServer.call(worker(pid), msg, timeout)
   end
 
-  def handle_cast(:inc, state),
-    do: {:noreply, state, {:continue, :inc}} |> IO.inspect(label: "handle_cast")
+  def cast(pid, msg) do
+    GenServer.cast(worker(pid), msg)
+  end
 
-  def handle_continue(:inc, state),
-    do: {:noreply, state + 1} |> IO.inspect(label: "handle_continue")
+  def send(pid, msg) do
+    Kernel.send(worker(pid), msg)
+  end
+
+  defp worker(pid), do: Peeper.Supervisor.worker(pid)
 end
