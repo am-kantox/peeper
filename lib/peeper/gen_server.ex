@@ -94,23 +94,23 @@ defmodule Peeper.GenServer do
       Starts a `Peeper` sub-supervision process tree linked to the current process.
       """
       def start_link(opts) do
-        opts = if Keyword.keyword?(opts), do: opts, else: [state: opts]
+        opts = Keyword.merge(unquote(Macro.escape(opts)), opts)
+        Peeper.GenServer.start_link(__MODULE__, opts)
+      end
+
+      @doc """
+      Builds and overrides a child specification.
+
+      _See:_ `Supervisor.child_spec/2`
+      """
+      def child_spec(opts) do
         opts = Keyword.merge(unquote(Macro.escape(opts)), opts)
 
-        {listener, opts} = Keyword.pop(opts, :listener)
+        {overrides, opts} =
+          Keyword.split(opts, [:restart, :shutdown, :type, :modules, :significant])
 
-        {state, opts} =
-          if Keyword.has_key?(opts, :state),
-            do: Keyword.pop!(opts, :state),
-            else: Keyword.split_with(opts, &(not match?({:name, _}, &1)))
-
-        opts =
-          opts
-          |> Keyword.put(:impl, __MODULE__)
-          |> Keyword.put(:listener, listener)
-          |> Keyword.put(:state, state)
-
-        Peeper.Supervisor.start_link(opts)
+        default = %{id: __MODULE__, start: {Peeper.GenServer, :start_link, [__MODULE__, opts]}}
+        Supervisor.child_spec(default, overrides)
       end
 
       @doc """
@@ -118,22 +118,28 @@ defmodule Peeper.GenServer do
       """
       def stop(pid, reason \\ :normal, timeout \\ :infinity),
         do: Supervisor.stop(pid, reason, timeout)
-
-      @doc """
-      Builds and overrides a child specification.
-
-      _See:_ `Supervisor.child_spec/2`
-      """
-
-      def child_spec(opts) do
-        opts = Keyword.merge(unquote(Macro.escape(opts)), opts)
-
-        {overrides, opts} =
-          Keyword.split(opts, [:restart, :shutdown, :type, :modules, :significant])
-
-        default = %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
-        Supervisor.child_spec(default, overrides)
-      end
     end
+  end
+
+  @doc """
+  Starts a `Peeper` sub-supervision process tree linked to the current process.
+  """
+  def start_link(module, opts) do
+    opts = if Keyword.keyword?(opts), do: opts, else: [state: opts]
+
+    {listener, opts} = Keyword.pop(opts, :listener)
+
+    {state, opts} =
+      if Keyword.has_key?(opts, :state),
+        do: Keyword.pop!(opts, :state),
+        else: Keyword.split_with(opts, &(not match?({:name, _}, &1)))
+
+    opts =
+      opts
+      |> Keyword.put(:impl, module)
+      |> Keyword.put(:listener, listener)
+      |> Keyword.put(:state, state)
+
+    Peeper.Supervisor.start_link(opts)
   end
 end
