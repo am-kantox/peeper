@@ -71,7 +71,7 @@ defmodule Peeper.MixProject do
       name: @app,
       files: ~w|lib stuff .formatter.exs .dialyzer/ignore.exs mix.exs README* LICENSE|,
       maintainers: ["Aleksei Matiushkin"],
-      licenses: ["Kantox LTD"],
+      licenses: ["MIT"],
       links: %{
         "GitHub" => "https://github.com/am-kantox/#{@app}",
         "Docs" => "https://hexdocs.pm/#{@app}"
