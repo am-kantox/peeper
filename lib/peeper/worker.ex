@@ -7,6 +7,7 @@ defmodule Peeper.Worker do
     {impl, opts} = Keyword.pop!(opts, :impl)
     {supervisor, opts} = Keyword.pop!(opts, :supervisor)
     {opts, []} = Keyword.pop!(opts, :opts)
+    {listener, opts} = Keyword.pop(opts, :listener)
 
     opts =
       with true <- Keyword.has_key?(opts, :name),
@@ -15,7 +16,11 @@ defmodule Peeper.Worker do
            do: Keyword.put(opts, :name, name),
            else: (_ -> opts)
 
-    GenServer.start_link(__MODULE__, %{impl: impl, supervisor: supervisor}, opts)
+    GenServer.start_link(
+      __MODULE__,
+      %{impl: impl, listener: listener, supervisor: supervisor},
+      opts
+    )
   end
 
   @impl GenServer
@@ -52,10 +57,22 @@ defmodule Peeper.Worker do
         terminate?: function_exported?(state.impl, :terminate, 2)
       }
 
+    listener_impls =
+      if Code.ensure_loaded?(state.listener) do
+        Map.new(Peeper.Listener.behaviour_info(:callbacks), fn {fun, arity} ->
+          {:"#{fun}?", function_exported?(state.listener, fun, arity)}
+        end)
+      else
+        Map.new(Peeper.Listener.behaviour_info(:callbacks), fn {fun, _arity} ->
+          {:"#{fun}?", false}
+        end)
+      end
+
     state =
       state
       |> Map.put(:state, cached_state)
       |> Map.put(:impl_funs, impl_funs)
+      |> Map.put(:listener_impls, listener_impls)
 
     state =
       case handle_init(state) do
@@ -148,10 +165,17 @@ defmodule Peeper.Worker do
   def handle_cast(msg, state), do: Peeper.Empty.handle_cast(msg, state)
 
   @impl GenServer
-  def terminate(reason, state) when state.impl_funs.terminate?,
+  def terminate(reason, state) do
+    if state.listener_impls.on_terminate?,
+      do: spawn(fn -> state.listener.on_terminate(reason, state.state) end)
+
+    do_terminate(reason, state.state)
+  end
+
+  defp do_terminate(reason, state) when state.impl_funs.terminate?,
     do: state.impl.terminate(reason, state.state)
 
-  def terminate(reason, state), do: Peeper.Empty.terminate(reason, state)
+  defp do_terminate(reason, state), do: Peeper.Empty.terminate(reason, state)
 
   #############################################################################
 
@@ -187,6 +211,9 @@ defmodule Peeper.Worker do
   defp do_store_state(%{supervisor: sup} = worker_state, state) do
     with pid when is_pid(pid) <- Peeper.Supervisor.state(sup),
          do: GenServer.cast(pid, {:set_state, self(), state})
+
+    if worker_state.listener_impls.on_state_changed?,
+      do: spawn(fn -> worker_state.listener.on_state_changed(worker_state.state, state) end)
 
     %{worker_state | state: state}
   end

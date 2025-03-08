@@ -95,21 +95,27 @@ defmodule Peeper.GenServer do
       """
       def start_link(opts) do
         opts = if Keyword.keyword?(opts), do: opts, else: [state: opts]
-        opts = Keyword.merge(unquote(opts), opts)
-        {opts, state} = Keyword.split(opts, [:name])
+        opts = Keyword.merge(unquote(Macro.escape(opts)), opts)
 
-        state = Keyword.get(state, :state, state)
+        {listener, opts} = Keyword.pop(opts, :listener)
+
+        {state, opts} =
+          if Keyword.has_key?(opts, :state),
+            do: Keyword.pop!(opts, :state),
+            else: Keyword.split_with(opts, &(not match?({:name, _}, &1)))
 
         opts =
           opts
           |> Keyword.put(:impl, __MODULE__)
+          |> Keyword.put(:listener, listener)
           |> Keyword.put(:state, state)
 
-        unquote(Macro.escape(opts))
-        |> Keyword.merge(opts)
-        |> Peeper.Supervisor.start_link()
+        Peeper.Supervisor.start_link(opts)
       end
 
+      @doc """
+      Stops a `Peeper` sub-supervision tree.
+      """
       def stop(pid, reason \\ :normal, timeout \\ :infinity),
         do: Supervisor.stop(pid, reason, timeout)
 
@@ -118,9 +124,15 @@ defmodule Peeper.GenServer do
 
       _See:_ `Supervisor.child_spec/2`
       """
+
       def child_spec(opts) do
+        opts = Keyword.merge(unquote(Macro.escape(opts)), opts)
+
+        {overrides, opts} =
+          Keyword.split(opts, [:restart, :shutdown, :type, :modules, :significant])
+
         default = %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
-        Supervisor.child_spec(default, unquote(Macro.escape(opts)))
+        Supervisor.child_spec(default, overrides)
       end
     end
   end

@@ -37,7 +37,7 @@ defmodule Peeper do
       1
       iex> # emulate crash
       ...> Process.exit(Peeper.Supervisor.worker(pid), :raise)
-      ...> [_, _] = Supervisor.which_children(pid)
+      ...> %{} = Peeper.Supervisor.which_children(pid)
       iex> Peeper.call(Counter, :state)
       1
       iex> Peeper.send(pid, :inc)
@@ -48,10 +48,18 @@ defmodule Peeper do
   ### `start_link/1`
 
   The function receives either an initial `state`, or a keyword having keys
-  `state` and (optionally) `name`. Also this keyword might have a configuration
-  for the top supervisor (keys: `[:strategy, :max_restarts, :max_seconds, :auto_shutdown]`.)
+    `state` and (optionally) `name`. Also this keyword might have a configuration
+    for the top supervisor (keys: `[:strategy, :max_restarts, :max_seconds, :auto_shutdown]`.)
 
   All other values passed would be re-passed to the underlying `GenServer`’s options.
+
+  ### Listener
+
+  One might pass `listener: MyListener` key to `PeeperImpl.start_link/1` where `MyListener`
+    should be an implementation of `Peeper.Listener` behaviour. The callbacks will be called
+    when the state of the underlying behaviour is _changed_ and on termination respectively.
+
+  That might be a good place to attach telemetry events, or logs, or whatnot.
   """
 
   defmodule Empty do
