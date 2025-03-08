@@ -19,7 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       MIX_ENV: test
-    name: Build and test on: OTP ${{matrix.pair.otp}} / Elixir ${{matrix.pair.elixir}}
     strategy:
       fail-fast: false
       matrix:
@@ -32,7 +31,7 @@ jobs:
               elixir: 1.18
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Elixir
+    - name: Set up Elixir OTP ${{matrix.pair.otp}} / Elixir ${{matrix.pair.elixir}}
       uses: erlef/setup-elixir@v1
     - name: Restore dependencies cache
       uses: actions/cache@v3
