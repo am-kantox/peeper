@@ -62,6 +62,8 @@ defmodule Peeper do
   That might be a good place to attach telemetry events, or logs, or whatnot.
   """
 
+  @async_delay 1
+
   defmodule Empty do
     @moduledoc false
     use GenServer
@@ -75,20 +77,29 @@ defmodule Peeper do
   """
   def call(pid, msg, timeout \\ 5_000) do
     GenServer.call(gen_server(pid), msg, timeout)
+  catch
+    :exit, {:noproc, {GenServer, :call, _args}} ->
+      call(pid, msg, timeout)
   end
 
   @doc """
   The counterpart for `GenServer.cast/2`. Uses the very same semantics.
   """
   def cast(pid, msg) do
-    GenServer.cast(gen_server(pid), msg)
+    pid
+    |> gen_server()
+    |> GenServer.cast(msg)
+    |> tap(fn _ -> Process.sleep(@async_delay) end)
   end
 
   @doc """
   The counterpart for `Kernel.send/2`. Uses the very same semantics.
   """
   def send(pid, msg) do
-    Kernel.send(gen_server(pid), msg)
+    pid
+    |> gen_server()
+    |> Kernel.send(msg)
+    |> tap(fn _ -> Process.sleep(@async_delay) end)
   end
 
   @doc """
@@ -98,7 +109,7 @@ defmodule Peeper do
   The `pid` returned might be used directly in calls to
   `GenServer.{call/3,cast/2}` and/or `Kernel.send/2`
   """
-  def gen_server(pid), do: Peeper.Supervisor.worker(pid)
+  def gen_server(pid), do: Peeper.Supervisor.worker(pid, @async_delay)
 
   @doc """
   Tries to produce a name for the underlying `GenServer` process.

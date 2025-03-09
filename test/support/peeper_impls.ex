@@ -7,7 +7,7 @@ defmodule Peeper.Impls.Listener do
 
   @impl true
   def on_state_changed(old_state, state) do
-    [old: old_state, new: state] |> inspect() |> Logger.info()
+    [old: old_state, new: state] |> inspect() |> Logger.debug()
   end
 
   @impl true
@@ -30,12 +30,10 @@ defmodule Peeper.Impls.Full do
   use Peeper.GenServer, listener: Peeper.Impls.Listener
 
   @impl Peeper.GenServer
-  def init(state) do
-    {:ok, state} |> IO.inspect(label: "init")
-  end
+  def init(state), do: {:ok, state}
 
   @impl Peeper.GenServer
-  def handle_info(:inc, state), do: {:noreply, state + 1} |> IO.inspect(label: "handle_info")
+  def handle_info(:inc, state), do: {:noreply, state + 1}
 
   @impl Peeper.GenServer
   def handle_call(:state, _from, state), do: {:reply, state, state}
@@ -46,9 +44,9 @@ defmodule Peeper.Impls.Full do
 
   @impl Peeper.GenServer
   def handle_cast(:inc, state),
-    do: {:noreply, state, {:continue, :inc}} |> IO.inspect(label: "handle_cast")
+    do: {:noreply, state, {:continue, :inc}}
 
   @impl Peeper.GenServer
   def handle_continue(:inc, state),
-    do: {:noreply, state + 1} |> IO.inspect(label: "handle_continue")
+    do: {:noreply, state + 1}
 end

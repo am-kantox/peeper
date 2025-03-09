@@ -41,9 +41,9 @@ defmodule Peeper.Worker do
   @impl GenServer
   def handle_continue(:__init__, state) do
     cached_state =
-      with pid <- Peeper.Supervisor.state(state.supervisor) do
-        GenServer.call(pid, :state)
-      end
+      state.supervisor
+      |> Peeper.Supervisor.state()
+      |> GenServer.call(:state)
 
     impl_funs =
       %{

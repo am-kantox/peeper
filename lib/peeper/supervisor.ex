@@ -24,41 +24,54 @@ defmodule Peeper.Supervisor do
     Supervisor.init(
       children,
       Keyword.merge(
-        [strategy: :one_for_one, max_restarts: 3, max_seconds: 5, auto_shutdown: :never],
+        [strategy: :one_for_one, max_restarts: 1_000, max_seconds: 10, auto_shutdown: :never],
         opts
       )
     )
   end
 
-  def state(pid), do: child(pid, Peeper.State, true)
-  def worker(pid), do: child(pid, Peeper.Worker, true)
+  def state(pid, delay \\ 0), do: child(pid, Peeper.State, true, delay)
+  def worker(pid, delay \\ 0), do: child(pid, Peeper.Worker, true, delay)
 
   @doc """
   Lists the children, awaiting for all to be restarted successfully.
   """
-  def which_children(pid) do
-    case Supervisor.which_children(pid) do
-      [{kind1, pid1, :worker, _}, {kind2, pid2, :worker, _}] when is_pid(pid1) and is_pid(pid2) ->
-        %{kind1 => pid1, kind2 => pid2}
+  def which_children(server, delay \\ 0) do
+    Process.sleep(delay)
 
-      _ ->
-        which_children(pid)
-    end
+    with [{kind1, pid1, :worker, [kind1]}, {kind2, pid2, :worker, [kind2]}]
+         when is_pid(pid1) and is_pid(pid2) <-
+           Supervisor.which_children(server),
+         pid1 when is_pid(pid1) <- whereis(pid1),
+         pid2 when is_pid(pid2) <- whereis(pid2),
+         do: %{kind1 => pid1, kind2 => pid2},
+         else: (_ -> which_children(server))
+  end
+
+  @doc """
+  Returns a local or remote pid if the `GenServer` is alive, `nil` otherwise
+  """
+  @spec whereis(server :: pid() | GenServer.name() | {atom(), node()}) :: pid() | nil
+  def whereis(server) do
+    with {name, node} <- GenServer.whereis(server),
+         do: :rpc.call(node, GenServer, :whereis, [name])
   end
 
   # [
   #   {Peeper.Worker, #PID<0.158.0>, :worker, [Peeper.Worker]},
   #   {Peeper.State, #PID<0.157.0>, :worker, [Peeper.State]}
   # ]
-  defp child(pid, kind, safe?)
+  defp child(pid, kind, safe?, delay)
 
-  defp child(pid, kind, true) do
+  defp child(pid, kind, true, delay) do
     pid
-    |> which_children()
+    |> which_children(delay)
     |> Map.fetch!(kind)
   end
 
-  # defp child(pid, kind, false) do
+  # defp child(pid, kind, false, delay) do
+  #   Process.sleep(delay)
+  #
   #   pid
   #   |> Supervisor.which_children()
   #   |> Enum.find_value(fn
