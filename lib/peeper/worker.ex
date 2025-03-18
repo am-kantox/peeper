@@ -7,6 +7,7 @@ defmodule Peeper.Worker do
     {impl, opts} = Keyword.pop!(opts, :impl)
     {supervisor, opts} = Keyword.pop!(opts, :supervisor)
     {opts, []} = Keyword.pop!(opts, :opts)
+    {keep_ets, opts} = Keyword.pop(opts, :keep_ets, [])
     {listener, opts} = Keyword.pop(opts, :listener)
 
     opts =
@@ -18,7 +19,7 @@ defmodule Peeper.Worker do
 
     GenServer.start_link(
       __MODULE__,
-      %{impl: impl, listener: listener, supervisor: supervisor},
+      %{impl: impl, listener: listener, supervisor: supervisor, keep_ets: keep_ets},
       opts
     )
   end
@@ -40,7 +41,7 @@ defmodule Peeper.Worker do
 
   @impl GenServer
   def handle_continue(:__init__, state) do
-    cached_state =
+    {cached_state, cached_ets} =
       state.supervisor
       |> Peeper.Supervisor.state()
       |> GenServer.call(:state)
@@ -95,13 +96,14 @@ defmodule Peeper.Worker do
           state
       end
 
-    {:noreply, state, {:continue, :__monitor_state__}}
+    {:noreply, state, {:continue, {:__monitor_state__, cached_ets}}}
   end
 
-  def handle_continue(:__monitor_state__, state) do
+  def handle_continue({:__monitor_state__, cached_ets}, state) do
     with pid <- Peeper.Supervisor.state(state.supervisor) do
       Process.monitor(pid)
-      _old_state = GenServer.cast(pid, {:set_state, self(), state.state})
+      create_ets(cached_ets)
+      :ok = GenServer.cast(pid, {:set_state, self(), {state.state, cached_ets}})
     end
 
     {:noreply, state}
@@ -206,15 +208,57 @@ defmodule Peeper.Worker do
   defp store_state(unknown, _worker_state),
     do: unknown
 
-  defp do_store_state(%{state: state} = worker_state, state), do: worker_state
-
   defp do_store_state(%{supervisor: sup} = worker_state, state) do
     with pid when is_pid(pid) <- Peeper.Supervisor.state(sup),
-         do: GenServer.cast(pid, {:set_state, self(), state})
+         do: GenServer.cast(pid, {:set_state, self(), {state, cache_ets(worker_state)}})
 
     if worker_state.listener_impls.on_state_changed?,
       do: spawn(fn -> worker_state.listener.on_state_changed(worker_state.state, state) end)
 
     %{worker_state | state: state}
+  end
+
+  defp create_ets([_ | _] = ets) do
+    Enum.map(ets, fn {name, opts, content} ->
+      name |> :ets.new(opts) |> tap(&:ets.insert(&1, content))
+    end)
+  end
+
+  defp create_ets(_), do: []
+
+  defp cache_ets(%{keep_ets: false}), do: nil
+
+  defp cache_ets(%{keep_ets: keep_ets}) do
+    Enum.flat_map(:ets.all(), fn table ->
+      info = :ets.info(table)
+      name = Keyword.fetch!(info, :name)
+
+      if Keyword.fetch!(info, :owner) == self() and
+           (keep_ets == :all or keep_ets == true or (is_list(keep_ets) and name in keep_ets)),
+         do: [info_to_content(name, info)],
+         else: []
+    end)
+  end
+
+  defp info_to_content(name, info) do
+    table = Keyword.fetch!(info, :id)
+
+    opts =
+      Enum.reduce(info, [], fn
+        {:protection, value}, acc -> [value | acc]
+        {:type, type}, acc -> [type | acc]
+        {:named_table, true}, acc -> [:named_table | acc]
+        {:keypos, keypos}, acc -> [{:keypos, keypos} | acc]
+        # [AM] warn here
+        {:heir, pid}, acc when is_pid(pid) -> acc
+        {:decentralized_counters, _} = dc, acc -> [dc | acc]
+        {:read_concurrency, _} = rc, acc -> [rc | acc]
+        {:write_concurrency, _} = wc, acc -> [wc | acc]
+        {:compressed, true}, acc -> [:compressed | acc]
+        _, acc -> acc
+      end)
+
+    content = table |> :ets.match(:"$1") |> List.flatten()
+    {name, opts, content}
   end
 end

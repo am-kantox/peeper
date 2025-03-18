@@ -38,11 +38,23 @@ defmodule Peeper.Impls.Full do
   @impl Peeper.GenServer
   def handle_call(:state, _from, state), do: {:reply, state, state}
 
+  def handle_call(:ets, _from, state) do
+    {:reply, :ets.match(:full_ets, :"$1"), state}
+  end
+
   def handle_call(:raise, _from, _state) do
     raise "boom"
   end
 
   @impl Peeper.GenServer
+  def handle_cast(:create_ets, state) do
+    :full_ets
+    |> :ets.new([:named_table, :ordered_set])
+    |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])
+
+    {:noreply, state}
+  end
+
   def handle_cast(:inc, state),
     do: {:noreply, state, {:continue, :inc}}
 

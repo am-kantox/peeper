@@ -69,7 +69,7 @@ defmodule Peeper do
     use GenServer
 
     @impl GenServer
-    def init(_), do: :ignore
+    def init(init_arg), do: {:ok, init_arg}
   end
 
   @doc """
