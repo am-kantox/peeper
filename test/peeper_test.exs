@@ -28,6 +28,19 @@ defmodule PeeperTest do
     assert 2 == GenServer.call(Peeper.gen_server(peeper_pid), :state)
   end
 
+  test "restores ETSs and process dictionary" do
+    pid = start_supervised!({Peeper.Impls.Full, state: 0, name: P3})
+
+    assert 0 == Peeper.call(pid, :state)
+    assert :ok == Peeper.cast(pid, {:create_ets, P3, :my_ets, %{foo: 42}})
+    assert :ok == Peeper.cast(pid, {:set_pd, :foo, 42})
+    assert :ok == Peeper.cast(pid, :inc)
+    Process.exit(Peeper.Supervisor.worker(pid), :raise)
+    assert 1 == Peeper.call(P3, :state)
+    assert 42 == Peeper.call(P3, {:get_pd, :foo})
+    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+  end
+
   test "stress calls and casts work properly" do
     peeper_pid = start_supervised!({Peeper.Impls.Full, state: 0, name: P3})
     pid1 = Peeper.gen_server(peeper_pid)

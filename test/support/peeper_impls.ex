@@ -6,11 +6,6 @@ defmodule Peeper.Impls.Listener do
   require Logger
 
   @impl true
-  def on_state_changed(old_state, state) do
-    [old: old_state, new: state] |> inspect() |> Logger.debug()
-  end
-
-  @impl true
   def on_terminate(reason, state) do
     [reason: reason, state: state] |> inspect() |> Logger.warning()
   end
@@ -38,8 +33,12 @@ defmodule Peeper.Impls.Full do
   @impl Peeper.GenServer
   def handle_call(:state, _from, state), do: {:reply, state, state}
 
-  def handle_call(:ets, _from, state) do
-    {:reply, :ets.match(:full_ets, :"$1"), state}
+  def handle_call({:ets, name}, _from, state) do
+    {:reply, :ets.match(name, :"$1"), state}
+  end
+
+  def handle_call({:get_pd, key}, _from, state) do
+    {:reply, Process.get(key), state}
   end
 
   def handle_call(:raise, _from, _state) do
@@ -47,11 +46,16 @@ defmodule Peeper.Impls.Full do
   end
 
   @impl Peeper.GenServer
-  def handle_cast(:create_ets, state) do
-    :full_ets
-    |> :ets.new([:named_table, :ordered_set, {:heir, Peeper.heir(P1), %{foo: 42}}])
+  def handle_cast({:create_ets, id, name, heir_data}, state) do
+    name
+    |> :ets.new([:named_table, :ordered_set, Peeper.heir(id, heir_data)])
     |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])
 
+    {:noreply, state}
+  end
+
+  def handle_cast({:set_pd, key, value}, state) do
+    Process.put(key, value)
     {:noreply, state}
   end
 

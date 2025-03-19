@@ -112,15 +112,16 @@ defmodule Peeper do
   def gen_server(pid), do: Peeper.Supervisor.worker(pid, @async_delay)
 
   @doc """
-  Returns the `pid` of the state holder. Useful when the `GenServer`
+  Returns a `{:heir, pid(), heir_data}` tuple where `pid` is the
+  pid of the state holder. Useful when the `GenServer`
   process creates persistent _ETS_, the result of this function is
-  to be passed to _ETS_ options as a second element of
-  `{:heir, pid(), heir_data}` tuple.
+  to be passed to _ETS_ options as a config parameter.
 
   In that case, the tables will be given away to the state process
   and then retaken by the restarted `GenServer`.
   """
-  def heir(pid), do: Peeper.Supervisor.state(pid, @async_delay)
+  def heir(pid, heir_data \\ nil),
+    do: {:heir, Peeper.Supervisor.state(pid, @async_delay), heir_data}
 
   @doc """
   Tries to produce a name for the underlying `GenServer` process.
