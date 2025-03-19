@@ -1,6 +1,8 @@
 defmodule Peeper.Worker do
   @moduledoc false
 
+  require Logger
+
   use GenServer, restart: :permanent
 
   def start_link(opts) do
@@ -41,7 +43,7 @@ defmodule Peeper.Worker do
 
   @impl GenServer
   def handle_continue(:__init__, state) do
-    {cached_state, cached_ets} =
+    {cached_state, cached_ets, cached_dictionary} =
       state.supervisor
       |> Peeper.Supervisor.state()
       |> GenServer.call(:state)
@@ -68,6 +70,9 @@ defmodule Peeper.Worker do
           {:"#{fun}?", false}
         end)
       end
+
+    :ok = load_ets(cached_ets)
+    :ok = load_dictionary(cached_dictionary)
 
     state =
       state
@@ -96,14 +101,18 @@ defmodule Peeper.Worker do
           state
       end
 
-    {:noreply, state, {:continue, {:__monitor_state__, cached_ets}}}
+    {:noreply, state, {:continue, :__monitor_state__}}
   end
 
-  def handle_continue({:__monitor_state__, cached_ets}, state) do
+  def handle_continue(:__monitor_state__, state) do
     with pid <- Peeper.Supervisor.state(state.supervisor) do
       Process.monitor(pid)
-      create_ets(cached_ets)
-      :ok = GenServer.cast(pid, {:set_state, self(), {state.state, cached_ets}})
+
+      :ok =
+        GenServer.cast(
+          pid,
+          {:set_state, self(), {state.state, dump_ets(state), dump_dictionary()}}
+        )
     end
 
     {:noreply, state}
@@ -129,6 +138,17 @@ defmodule Peeper.Worker do
   def handle_info({:DOWN, _ref, :process, from, _reason}, state) do
     case Peeper.Supervisor.state(state.supervisor) do
       ^from -> {:noreply, state, {:continue, :__monitor_state__}}
+      _ -> {:noreply, state}
+    end
+  end
+
+  def handle_info({:"ETS-TRANSFER", tid, from, heir_data}, state) do
+    Logger.debug(
+      "ETS transfer (WORKER) ‹" <> inspect(tid: tid, heir_data: heir_data, state: state) <> "›"
+    )
+
+    case Peeper.Supervisor.state(state.supervisor) do
+      ^from -> {:noreply, state}
       _ -> {:noreply, state}
     end
   end
@@ -209,8 +229,12 @@ defmodule Peeper.Worker do
     do: unknown
 
   defp do_store_state(%{supervisor: sup} = worker_state, state) do
-    with pid when is_pid(pid) <- Peeper.Supervisor.state(sup),
-         do: GenServer.cast(pid, {:set_state, self(), {state, cache_ets(worker_state)}})
+    with pid when is_pid(pid) <- Peeper.Supervisor.state(sup) do
+      GenServer.cast(
+        pid,
+        {:set_state, self(), {state, dump_ets(worker_state), dump_dictionary()}}
+      )
+    end
 
     if worker_state.listener_impls.on_state_changed?,
       do: spawn(fn -> worker_state.listener.on_state_changed(worker_state.state, state) end)
@@ -218,29 +242,53 @@ defmodule Peeper.Worker do
     %{worker_state | state: state}
   end
 
-  defp create_ets([_ | _] = ets) do
-    Enum.map(ets, fn {name, opts, content} ->
+  @spec load_ets([{term(), [atom() | {atom(), term()}], [tuple()]}]) :: :ok
+  defp load_ets([_ | _] = ets) do
+    Enum.each(ets, fn {name, opts, content} ->
       name |> :ets.new(opts) |> tap(&:ets.insert(&1, content))
     end)
   end
 
-  defp create_ets(_), do: []
+  defp load_ets(_), do: :ok
 
-  defp cache_ets(%{keep_ets: false}), do: nil
+  defp dump_ets(%{keep_ets: false}), do: []
 
-  defp cache_ets(%{keep_ets: keep_ets}) do
+  defp dump_ets(%{supervisor: sup, keep_ets: keep_ets}) do
     Enum.flat_map(:ets.all(), fn table ->
       info = :ets.info(table)
       name = Keyword.fetch!(info, :name)
 
       if Keyword.fetch!(info, :owner) == self() and
            (keep_ets == :all or keep_ets == true or (is_list(keep_ets) and name in keep_ets)),
-         do: [info_to_content(name, info)],
+         do: [info_to_content(sup, name, info)],
          else: []
     end)
   end
 
-  defp info_to_content(name, info) do
+  @spec load_dictionary([{term(), term()}]) :: :ok
+  defp load_dictionary([_ | _] = dictionary) do
+    Enum.each(dictionary, fn {key, value} -> Process.put(key, value) end)
+  end
+
+  defp load_dictionary(_), do: :ok
+
+  defp dump_dictionary do
+    Process.get_keys()
+    |> Enum.filter(
+      &(&1 not in [
+          {:elixir, :eval_env},
+          :"$ancestors",
+          :"$initial_call",
+          :iex_evaluator,
+          :iex_history,
+          :iex_server,
+          :elixir_checker_info
+        ])
+    )
+    |> Enum.map(&{&1, Process.get(&1)})
+  end
+
+  defp info_to_content(sup, name, info) do
     table = Keyword.fetch!(info, :id)
 
     opts =
@@ -249,6 +297,8 @@ defmodule Peeper.Worker do
         {:type, type}, acc -> [type | acc]
         {:named_table, true}, acc -> [:named_table | acc]
         {:keypos, keypos}, acc -> [{:keypos, keypos} | acc]
+        {:heir, ^sup}, acc -> [{:heir, sup} | acc]
+        {:heir, :none}, acc -> acc
         # [AM] warn here
         {:heir, pid}, acc when is_pid(pid) -> acc
         {:decentralized_counters, _} = dc, acc -> [dc | acc]
