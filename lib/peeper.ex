@@ -62,7 +62,7 @@ defmodule Peeper do
   That might be a good place to attach telemetry events, or logs, or whatnot.
   """
 
-  @async_delay 1
+  @async_delay 0
 
   defmodule Empty do
     @moduledoc false
@@ -85,21 +85,21 @@ defmodule Peeper do
   @doc """
   The counterpart for `GenServer.cast/2`. Uses the very same semantics.
   """
-  def cast(pid, msg) do
+  def cast(pid, msg, delay \\ @async_delay) do
     pid
     |> gen_server()
     |> GenServer.cast(msg)
-    |> tap(fn _ -> Process.sleep(@async_delay) end)
+    |> tap(fn _ -> Process.sleep(delay) end)
   end
 
   @doc """
   The counterpart for `Kernel.send/2`. Uses the very same semantics.
   """
-  def send(pid, msg) do
+  def send(pid, msg, delay \\ @async_delay) do
     pid
     |> gen_server()
     |> Kernel.send(msg)
-    |> tap(fn _ -> Process.sleep(@async_delay) end)
+    |> tap(fn _ -> Process.sleep(delay) end)
   end
 
   @doc """
@@ -109,7 +109,7 @@ defmodule Peeper do
   The `pid` returned might be used directly in calls to
   `GenServer.{call/3,cast/2}` and/or `Kernel.send/2`
   """
-  def gen_server(pid), do: Peeper.Supervisor.worker(pid, @async_delay)
+  def gen_server(pid, delay \\ @async_delay), do: Peeper.Supervisor.worker(pid, delay)
 
   @doc """
   Returns a `{:heir, pid(), heir_data}` tuple where `pid` is the
