@@ -12,9 +12,9 @@ defmodule Peeper do
     messages to the process, raise from its `handle_×××` clauses and whatnot.
 
   There are two differencies compared to bare `GenServer`. `init/1` callback cannot return anything
-    but `{:ok, state}` tuple (this might have changed in the future,) and
-    `Peeper.{call/3,cast/2,send/2}` is to be used instead of `GenServer.{call/3,cast/2}` and
-    `Kernel.send/2` (this is not gonna change.)
+    but `{:ok, state}` or `{:ok, new_state, timeout() | :hibernate | {:continue, term()}` tuples
+    (this might have changed in the future,) and `Peeper.{call/3,cast/2,send/2}` is to be used
+    instead of `GenServer.{call/3,cast/2}` and `Kernel.send/2` (this is not gonna change.)
 
   Please note, that whatever is set in `init/1` callback as a state, will be overriden by
     the latest state available upon restarts. That being said, `init/1` would play its role
@@ -31,7 +31,7 @@ defmodule Peeper do
       0
       iex> Peeper.cast(pid, :inc)
       :ok
-      iex> GenServer.call(Counter.GenServer, :state)
+      iex> GenServer.call(Peeper.gen_server(Counter), :state)
       1
       iex> Peeper.call(pid, :state)
       1
@@ -71,6 +71,9 @@ defmodule Peeper do
     @impl GenServer
     def init(init_arg), do: {:ok, init_arg}
   end
+
+  defdelegate start_link(opts), to: Peeper.Supervisor
+  defdelegate child_spec(opts), to: Peeper.Supervisor
 
   @doc """
   The counterpart for `GenServer.call/3`. Uses the very same semantics.

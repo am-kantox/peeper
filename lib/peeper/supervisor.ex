@@ -6,11 +6,15 @@ defmodule Peeper.Supervisor do
   alias Peeper.{State, Worker}
 
   def start_link(opts) do
-    Supervisor.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
+    {name, opts} = Keyword.pop!(opts, :name)
+    Supervisor.start_link(__MODULE__, opts, name: name)
   end
 
   @impl true
   def init(opts) do
+    {sup_opts, opts} =
+      Keyword.split(opts, [:strategy, :max_restarts, :max_seconds, :auto_shutdown])
+
     {impl, opts} = Keyword.pop!(opts, :impl)
     {state, opts} = Keyword.pop!(opts, :state)
 
@@ -19,13 +23,11 @@ defmodule Peeper.Supervisor do
       {Worker, impl: impl, opts: opts, supervisor: self()}
     ]
 
-    opts = Keyword.take(opts, [:strategy, :max_restarts, :max_seconds, :auto_shutdown, :name])
-
     Supervisor.init(
       children,
       Keyword.merge(
         [strategy: :one_for_one, max_restarts: 1_000, max_seconds: 10, auto_shutdown: :never],
-        opts
+        sup_opts
       )
     )
   end

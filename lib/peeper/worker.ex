@@ -80,15 +80,19 @@ defmodule Peeper.Worker do
       |> Map.put(:impl_funs, impl_funs)
       |> Map.put(:listener_impls, listener_impls)
 
-    state =
+    {state, continue_arg} =
       case handle_init(state) do
         {:ok, state} ->
-          state
+          {state, :__monitor_state__}
+
+        {:ok, state, arg} ->
+          {state, {:__monitor_state__, arg}}
 
         other ->
           message = """
           function init/1 required by behaviour Peeper.GenServer (in module #{inspect(state.impl)}) \
-          differs from `init/1` callback in GenServer. It cannot return anything but `{:ok, new_state}` tuple.
+          differs from `init/1` callback in GenServer. It cannot return anything but `{:ok, new_state}` \
+          or `{:ok, new_state, timeout() | :hibernate | {:continue, term()}` tuples.
 
           We are to discard the value returned and make no modifications to the state, please make sure \
           you either return an `{:ok, new_state}` tuple from Peeper.GenServer.init/1 callback or switch \
@@ -98,24 +102,20 @@ defmodule Peeper.Worker do
           """
 
           IO.warn(message, __ENV__)
-          state
+          {state, :__monitor_state__}
       end
 
-    {:noreply, state, {:continue, :__monitor_state__}}
+    {:noreply, state, {:continue, continue_arg}}
   end
 
   def handle_continue(:__monitor_state__, state) do
-    with pid <- Peeper.Supervisor.state(state.supervisor) do
-      Process.monitor(pid)
-
-      :ok =
-        GenServer.cast(
-          pid,
-          {:set_state, self(), {state.state, dump_ets(state), dump_dictionary()}}
-        )
-    end
-
+    do_handle_continue_monitor_state(state)
     {:noreply, state}
+  end
+
+  def handle_continue({:__monitor_state__, arg}, state) do
+    do_handle_continue_monitor_state(state)
+    {:noreply, state, arg}
   end
 
   def handle_continue(continue_arg, state) when state.impl_funs.handle_continue? do
@@ -164,8 +164,19 @@ defmodule Peeper.Worker do
   @impl GenServer
   def handle_call(:__state__, {from, _}, state) do
     case Peeper.Supervisor.state(state.supervisor) do
-      ^from -> {:reply, state.state, state}
-      _ -> {:reply, :hidden, state}
+      ^from ->
+        {:reply,
+         [
+           impl: state.impl,
+           state: [
+             state: state.state,
+             ets: dump_ets(%{state | keep_ets: :all}),
+             dictionary: dump_dictionary()
+           ]
+         ], state}
+
+      _ ->
+        {:reply, :hidden, state}
     end
   end
 
@@ -260,7 +271,7 @@ defmodule Peeper.Worker do
 
       if Keyword.fetch!(info, :owner) == self() and
            (keep_ets == :all or keep_ets == true or (is_list(keep_ets) and name in keep_ets)),
-         do: [info_to_content(sup, name, info)],
+         do: [sup |> Peeper.Supervisor.state() |> info_to_content(name, info)],
          else: []
     end)
   end
@@ -288,7 +299,7 @@ defmodule Peeper.Worker do
     |> Enum.map(&{&1, Process.get(&1)})
   end
 
-  defp info_to_content(sup, name, info) do
+  defp info_to_content(state_pid, name, info) do
     table = Keyword.fetch!(info, :id)
 
     opts =
@@ -297,10 +308,9 @@ defmodule Peeper.Worker do
         {:type, type}, acc -> [type | acc]
         {:named_table, true}, acc -> [:named_table | acc]
         {:keypos, keypos}, acc -> [{:keypos, keypos} | acc]
-        {:heir, ^sup}, acc -> [{:heir, sup} | acc]
+        {:heir, ^state_pid}, acc -> [{:heir, :peeper} | acc]
         {:heir, :none}, acc -> acc
-        # [AM] warn here
-        {:heir, pid}, acc when is_pid(pid) -> acc
+        {:heir, pid}, acc when is_pid(pid) -> warn_heir(pid, acc)
         {:decentralized_counters, _} = dc, acc -> [dc | acc]
         {:read_concurrency, _} = rc, acc -> [rc | acc]
         {:write_concurrency, _} = wc, acc -> [wc | acc]
@@ -309,6 +319,28 @@ defmodule Peeper.Worker do
       end)
 
     content = table |> :ets.match(:"$1") |> List.flatten()
+
     {name, opts, content}
+  end
+
+  defp do_handle_continue_monitor_state(state) do
+    with pid <- Peeper.Supervisor.state(state.supervisor) do
+      Process.monitor(pid)
+
+      :ok =
+        GenServer.cast(
+          pid,
+          {:set_state, self(), {state.state, dump_ets(state), dump_dictionary()}}
+        )
+    end
+  end
+
+  defp warn_heir(pid, acc) do
+    Logger.warning(
+      "ETS heir is set to the uncontrolled PID ‹" <>
+        inspect(pid) <> "›, the ETS will be lost upon first restart"
+    )
+
+    acc
   end
 end

@@ -46,7 +46,15 @@ defmodule Peeper.Impls.Full do
   end
 
   @impl Peeper.GenServer
-  def handle_cast({:create_ets, id, name, heir_data}, state) do
+  def handle_cast({:create_ets, name}, state) do
+    name
+    |> :ets.new([:named_table, :ordered_set])
+    |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])
+
+    {:noreply, state}
+  end
+
+  def handle_cast({:create_heired_ets, name, id, heir_data}, state) do
     name
     |> :ets.new([:named_table, :ordered_set, Peeper.heir(id, heir_data)])
     |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])

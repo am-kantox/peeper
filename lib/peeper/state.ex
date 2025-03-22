@@ -13,9 +13,18 @@ defmodule Peeper.State do
   @impl GenServer
   def init(state) do
     {supervisor, state} = Keyword.pop!(state, :supervisor)
-    {ets, state} = Keyword.pop(state, :ets, [])
-    {dictionary, state} = Keyword.pop(state, :dictionary, [])
-    {state, []} = Keyword.pop(state, :state, nil)
+    {state, _opts} = Keyword.pop(state, :state, [])
+
+    {state, ets, dictionary} =
+      if Keyword.keyword?(state) and Keyword.has_key?(state, :state) do
+        {ets, state} = Keyword.pop(state, :ets, [])
+        {dictionary, state} = Keyword.pop(state, :dictionary, [])
+        {state, []} = Keyword.pop(state, :state, nil)
+        {state, ets, dictionary}
+      else
+        {state, [], []}
+      end
+
     # [AM] maybe optionally keep all the intermediate states with `bag`?
     state_ets =
       :ets.new(@state_ets, [
@@ -27,7 +36,7 @@ defmodule Peeper.State do
 
     true = :ets.insert(state_ets, {:state, state})
     true = :ets.insert(state_ets, {:dictionary, dictionary})
-    true = :ets.insert(state_ets, {:ets, ets})
+    true = :ets.insert(state_ets, {:ets, fix_peeper_heirs(ets, self())})
 
     {:ok, struct!(__MODULE__, supervisor: supervisor, state_ets: state_ets)}
   end
@@ -46,12 +55,51 @@ defmodule Peeper.State do
 
         worker_state = :ets.lookup_element(ets, :state, 2)
         worker_dictionary = :ets.lookup_element(ets, :dictionary, 2)
-        worker_ets = :ets.lookup_element(ets, :ets, 2)
+
+        worker_ets =
+          ets
+          |> :ets.lookup_element(:ets, 2)
+          |> filter_peeper_heirs()
+
         {:reply, {worker_state, worker_ets, worker_dictionary}, %Peeper.State{state | heired: []}}
 
       _ ->
         {:reply, :hidden, state}
     end
+  end
+
+  def handle_call({:move, name, from_dynamic_supervisor, to_dynamic_supervisor}, _from, state) do
+    worker_child_spec =
+      state.supervisor
+      |> Peeper.call(:__state__)
+      |> Keyword.put_new(:name, name)
+      |> Peeper.child_spec()
+      |> IO.inspect(label: "WORKER CHILD SPEC")
+
+    task =
+      with peeper_pid when is_pid(peeper_pid) <- GenServer.whereis(name),
+           from_dynamic_supervisor_pid when is_pid(from_dynamic_supervisor_pid) <-
+             GenServer.whereis(from_dynamic_supervisor),
+           to_dynamic_supervisor_pid when is_pid(to_dynamic_supervisor_pid) <-
+             GenServer.whereis(to_dynamic_supervisor) do
+        fn ->
+          with :ok <- DynamicSupervisor.terminate_child(from_dynamic_supervisor_pid, peeper_pid) do
+            me = node()
+
+            case node(to_dynamic_supervisor_pid) do
+              ^me ->
+                DynamicSupervisor.start_child(to_dynamic_supervisor_pid, worker_child_spec)
+
+              remote ->
+                :rpc.block_call(remote, DynamicSupervisor, :start_child, [worker_child_spec])
+            end
+          end
+        end
+      else
+        _ -> nil
+      end
+
+    {:reply, task, state}
   end
 
   @impl GenServer
@@ -75,5 +123,20 @@ defmodule Peeper.State do
     )
 
     {:noreply, %Peeper.State{state | heired: Enum.uniq([{tid, heir_data} | state.heired])}}
+  end
+
+  defp filter_peeper_heirs([]), do: []
+
+  defp filter_peeper_heirs(ets),
+    do: Enum.reject(ets, fn {_name, opts, _data} -> Enum.member?(opts, {:heir, :peeper}) end)
+
+  defp fix_peeper_heirs(ets, pid) do
+    Enum.map(ets, fn {name, opts, data} ->
+      {name,
+       Enum.map(opts, fn
+         {:heir, :peeper} -> {:heir, pid}
+         other -> other
+       end), data}
+    end)
   end
 end

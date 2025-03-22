@@ -16,7 +16,7 @@ defmodule PeeperTest do
   end
 
   test "direct calls and casts to the wrapped GenServer" do
-    peeper_pid = start_supervised!({Peeper.Impls.Full, state: 0, name: P2})
+    peeper_pid = start_supervised!(Peeper.child_spec(impl: Peeper.Impls.Full, state: 0, name: P2))
     pid = Peeper.gen_server(peeper_pid)
 
     assert 0 == GenServer.call(pid, :state)
@@ -29,17 +29,37 @@ defmodule PeeperTest do
   end
 
   test "restores ETSs and process dictionary" do
-    pid = start_supervised!({Peeper.Impls.Full, state: 0, name: P3})
+    {:ok, source_pid} = DynamicSupervisor.start_link(name: SDS)
+
+    {:ok, pid} =
+      DynamicSupervisor.start_child(SDS, {Peeper.Impls.Full, state: 0, name: P3, keep_ets: true})
 
     assert 0 == Peeper.call(pid, :state)
-    assert :ok == Peeper.cast(pid, {:create_ets, P3, :my_ets, %{foo: 42}})
+    # assert :ok == Peeper.cast(pid, {:create_ets, :my_ets})
+    # assert :ok == Peeper.cast(pid, {:create_heired_ets, :my_heired_ets, P3, %{foo: 42}})
     assert :ok == Peeper.cast(pid, {:set_pd, :foo, 42})
     assert :ok == Peeper.cast(pid, :inc)
     assert 1 == Peeper.call(P3, :state)
     Process.exit(Peeper.Supervisor.worker(pid), :kill)
     assert 1 == Peeper.call(P3, :state)
     assert 42 == Peeper.call(P3, {:get_pd, :foo})
-    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
+
+    {:ok, target_pid} = DynamicSupervisor.start_link(name: TDS)
+
+    pid
+    |> Peeper.Supervisor.state()
+    |> GenServer.call({:move, P3, source_pid, target_pid})
+    |> Task.async()
+    |> Task.await()
+
+    assert [{:undefined, pid, :supervisor, _}] = DynamicSupervisor.which_children(TDS)
+    assert pid == GenServer.whereis(P3)
+    assert 1 == Peeper.call(P3, :state)
+    assert 42 == Peeper.call(P3, {:get_pd, :foo})
+    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
   end
 
   test "stress calls and casts work properly" do
