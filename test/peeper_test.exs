@@ -35,16 +35,16 @@ defmodule PeeperTest do
       DynamicSupervisor.start_child(SDS, {Peeper.Impls.Full, state: 0, name: P3, keep_ets: true})
 
     assert 0 == Peeper.call(pid, :state)
-    # assert :ok == Peeper.cast(pid, {:create_ets, :my_ets})
-    # assert :ok == Peeper.cast(pid, {:create_heired_ets, :my_heired_ets, P3, %{foo: 42}})
+    assert :ok == Peeper.cast(pid, {:create_ets, :my_ets})
+    assert :ok == Peeper.cast(pid, {:create_heired_ets, :my_heired_ets, P3, %{foo: 42}})
     assert :ok == Peeper.cast(pid, {:set_pd, :foo, 42})
     assert :ok == Peeper.cast(pid, :inc)
     assert 1 == Peeper.call(P3, :state)
     Process.exit(Peeper.Supervisor.worker(pid), :kill)
     assert 1 == Peeper.call(P3, :state)
     assert 42 == Peeper.call(P3, {:get_pd, :foo})
-    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
-    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
+    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
 
     {:ok, target_pid} = DynamicSupervisor.start_link(name: TDS)
 
@@ -54,12 +54,14 @@ defmodule PeeperTest do
     |> Task.async()
     |> Task.await()
 
+    Process.sleep(10)
+
     assert [{:undefined, pid, :supervisor, _}] = DynamicSupervisor.which_children(TDS)
     assert pid == GenServer.whereis(P3)
     assert 1 == Peeper.call(P3, :state)
     assert 42 == Peeper.call(P3, {:get_pd, :foo})
-    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
-    # assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
+    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_ets})
+    assert [[a: 42], [b: :foo], [{:c, 42, :foo}]] = Peeper.call(P3, {:ets, :my_heired_ets})
   end
 
   test "stress calls and casts work properly" do

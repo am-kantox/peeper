@@ -36,16 +36,19 @@ defmodule Peeper.State do
 
     true = :ets.insert(state_ets, {:state, state})
     true = :ets.insert(state_ets, {:dictionary, dictionary})
-    true = :ets.insert(state_ets, {:ets, fix_peeper_heirs(ets, self())})
+    {heired, ets} = split_peeper_heirs(ets)
+    true = :ets.insert(state_ets, {:ets, ets})
 
-    {:ok, struct!(__MODULE__, supervisor: supervisor, state_ets: state_ets)}
+    {:ok, struct!(__MODULE__, supervisor: supervisor, state_ets: state_ets, heired: heired)}
   end
 
   @impl GenServer
   def handle_call(:state, {pid, _tag}, %Peeper.State{state_ets: ets} = state) do
     case Peeper.Supervisor.worker(state.supervisor) do
       ^pid ->
-        Enum.each(state.heired, fn {tid, heir_data} ->
+        state.heired
+        |> fix_peeper_heirs(pid)
+        |> Enum.each(fn {tid, heir_data} ->
           Logger.debug(
             "Giving away ‹" <> inspect(tid: tid, heir_data: heir_data, state: state) <> "›"
           )
@@ -74,7 +77,6 @@ defmodule Peeper.State do
       |> Peeper.call(:__state__)
       |> Keyword.put_new(:name, name)
       |> Peeper.child_spec()
-      |> IO.inspect(label: "WORKER CHILD SPEC")
 
     task =
       with peeper_pid when is_pid(peeper_pid) <- GenServer.whereis(name),
@@ -130,13 +132,29 @@ defmodule Peeper.State do
   defp filter_peeper_heirs(ets),
     do: Enum.reject(ets, fn {_name, opts, _data} -> Enum.member?(opts, {:heir, :peeper}) end)
 
-  defp fix_peeper_heirs(ets, pid) do
-    Enum.map(ets, fn {name, opts, data} ->
-      {name,
-       Enum.map(opts, fn
-         {:heir, :peeper} -> {:heir, pid}
-         other -> other
-       end), data}
+  defp split_peeper_heirs(ets) do
+    Enum.reduce(ets, {[], []}, fn {_, opts, _} = table, {heired, rest} ->
+      if Enum.member?(opts, {:heir, :peeper}),
+        do: {[table | heired], rest},
+        else: {heired, [table | rest]}
+    end)
+  end
+
+  defp fix_peeper_heirs(heired_ets, pid) do
+    Enum.map(heired_ets, fn
+      {tid, heir_data} ->
+        {tid, heir_data}
+
+      {name, opts, data} ->
+        heir_data = %{peeper: name}
+
+        opts =
+          Enum.map(opts, fn
+            {:heir, :peeper} -> {:heir, pid, heir_data}
+            other -> other
+          end)
+
+        {name |> :ets.new(opts) |> tap(&:ets.insert(&1, data)), heir_data}
     end)
   end
 end
