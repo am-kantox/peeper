@@ -48,11 +48,7 @@ defmodule PeeperTest do
 
     {:ok, target_pid} = DynamicSupervisor.start_link(name: TDS)
 
-    pid
-    |> Peeper.Supervisor.state()
-    |> GenServer.call({:move, P3, source_pid, target_pid})
-    |> Task.async()
-    |> Task.await()
+    Peeper.transfer(P3, source_pid, target_pid)
 
     Process.sleep(10)
 

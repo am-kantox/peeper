@@ -53,6 +53,38 @@ defmodule Peeper do
 
   All other values passed would be re-passed to the underlying `GenServer`’s options.
 
+  ### Keeping ETS
+
+  `Peeper` can preserve ETS tables created by the wrapped process between crashes in several ways.
+
+  The proper solution would be to add a `:heir` option to the ETS created by the process as
+
+  ```elixir
+  :ets.new(name, [:private, :ordered_set, Peeper.heir(MyNamedPeeper)])
+  ```
+
+  That way the ETS will remain private and not readable by any other part of the system, although
+    it’ll be preserved between crashes _and_ might be transferred to another dynamic supervisor (see below.)
+
+  If for some reason setting `:heir` explicitly is not an option, one might pass 
+    `keep_ets: true | :all | [ets_name()]` option to `Peeper.start_link/1`. It’s not efficient, because
+    ETS content will be passed tyo the backing state process every time the change to it happens to occur.
+
+  If the ETS created by the underlined process has `{:heir, other_process_pid()}` set, ithe behaviour
+    after a process crash is undefined, because ETS will be transferred to another process and reach out
+    of the control of `Peeper`.
+
+  ### Moving to another `DynamicSupervior`
+
+  The `Peeper` branch might be transferred an a whole to another dynamic supervisor in the following way
+
+  ```elixir
+  Peeper.transfer(MyNamedPeeper, source_dynamic_supervisor, target_dynamic_supervisor)
+  ```
+
+  The `target_dynamic_supervisor` might be a remote `pid`, in such a case `Peeper` must be compiled 
+    and loaded on the target node.
+
   ### Listener
 
   One might pass `listener: MyListener` key to `PeeperImpl.start_link/1` where `MyListener`
@@ -72,12 +104,38 @@ defmodule Peeper do
     def init(init_arg), do: {:ok, init_arg}
   end
 
+  @typedoc "The name of the processes branch"
+  @type name :: atom()
+
+  @typedoc "The option accepted by `:ets.new/2`"
+  @type ets_option ::
+          {:type, :ets.table_type()}
+          | :public
+          | :protected
+          | :private
+          | :named_table
+          | {:keypos, pos_integer()}
+          | {:heir, pid(), term()}
+          | {:heir, :none}
+          | {:write_concurrency, boolean() | :auto}
+          | {:read_concurrency, boolean()}
+          | {:decentralized_counters, boolean()}
+          | :compressed
+
+  @doc """
+  Starts a supervisor branch with the given options.
+  """
   defdelegate start_link(opts), to: Peeper.Supervisor
+
+  @doc """
+  Returns a specification to start a branch under a supervisor.
+  """
   defdelegate child_spec(opts), to: Peeper.Supervisor
 
   @doc """
   The counterpart for `GenServer.call/3`. Uses the very same semantics.
   """
+  @spec call(name() | pid(), term(), timeout()) :: term()
   def call(pid, msg, timeout \\ 5_000) do
     GenServer.call(gen_server(pid), msg, timeout)
   catch
@@ -88,6 +146,7 @@ defmodule Peeper do
   @doc """
   The counterpart for `GenServer.cast/2`. Uses the very same semantics.
   """
+  @spec cast(name() | pid(), term()) :: :ok
   def cast(pid, msg, delay \\ @async_delay) do
     pid
     |> gen_server()
@@ -98,11 +157,36 @@ defmodule Peeper do
   @doc """
   The counterpart for `Kernel.send/2`. Uses the very same semantics.
   """
+  @spec send(name() | pid(), msg) :: msg when msg: term()
   def send(pid, msg, delay \\ @async_delay) do
     pid
     |> gen_server()
     |> Kernel.send(msg)
     |> tap(fn _ -> Process.sleep(delay) end)
+  end
+
+  @doc """
+  Transfers the whole `Peeper` branch from one supervisor to another.
+  """
+  @spec transfer(
+          peeper :: name(),
+          source :: Supervisor.supervisor(),
+          destination :: Supervisor.supervisor(),
+          return_fun? :: boolean()
+        ) :: nil | (-> nil | DynamicSupervisor.on_start_child()) | term()
+  def transfer(name, source_pid, destination_pid, return_fun? \\ false)
+
+  def transfer(name, source_pid, destination_pid, true) do
+    name
+    |> Peeper.Supervisor.state()
+    |> GenServer.call({:transfer, name, source_pid, destination_pid})
+  end
+
+  def transfer(name, source_pid, destination_pid, false) do
+    name
+    |> transfer(source_pid, destination_pid, true)
+    |> Task.async()
+    |> Task.await()
   end
 
   @doc """
@@ -112,6 +196,7 @@ defmodule Peeper do
   The `pid` returned might be used directly in calls to
   `GenServer.{call/3,cast/2}` and/or `Kernel.send/2`
   """
+  @spec gen_server(name() | pid()) :: pid()
   def gen_server(pid, delay \\ @async_delay), do: Peeper.Supervisor.worker(pid, delay)
 
   @doc """
@@ -123,6 +208,7 @@ defmodule Peeper do
   In that case, the tables will be given away to the state process
   and then retaken by the restarted `GenServer`.
   """
+  @spec heir(name() | pid(), heir_data) :: {:heir, pid(), heir_data} when heir_data: term()
   def heir(pid, heir_data \\ nil),
     do: {:heir, Peeper.Supervisor.state(pid, @async_delay), heir_data}
 
@@ -134,6 +220,7 @@ defmodule Peeper do
   In such a case, the underlying `GenServer` module receives the name
   `Module.concat(name, GenServer)` and might be used as such.
   """
+  @spec gen_server_name(name() | pid() | nil) :: name() | nil
   def gen_server_name(nil), do: nil
 
   def gen_server_name(peeper_name) when is_atom(peeper_name),

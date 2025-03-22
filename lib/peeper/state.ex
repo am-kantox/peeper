@@ -6,6 +6,8 @@ defmodule Peeper.State do
 
   @state_ets :peeper_state_ets
 
+  @type ets_dump :: {Peeper.name(), [Peeper.ets_option()], [tuple()]}
+
   defstruct supervisor: nil, state_ets: nil, heired: []
 
   def start_link(state), do: GenServer.start_link(__MODULE__, state)
@@ -71,7 +73,7 @@ defmodule Peeper.State do
     end
   end
 
-  def handle_call({:move, name, from_dynamic_supervisor, to_dynamic_supervisor}, _from, state) do
+  def handle_call({:transfer, name, from_dynamic_supervisor, to_dynamic_supervisor}, _from, state) do
     worker_child_spec =
       state.supervisor
       |> Peeper.call(:__state__)
@@ -127,11 +129,13 @@ defmodule Peeper.State do
     {:noreply, %Peeper.State{state | heired: Enum.uniq([{tid, heir_data} | state.heired])}}
   end
 
+  @spec filter_peeper_heirs([ets_dump()]) :: [ets_dump()]
   defp filter_peeper_heirs([]), do: []
 
   defp filter_peeper_heirs(ets),
     do: Enum.reject(ets, fn {_name, opts, _data} -> Enum.member?(opts, {:heir, :peeper}) end)
 
+  @spec split_peeper_heirs([ets_dump()]) :: {[ets_dump()], [ets_dump()]}
   defp split_peeper_heirs(ets) do
     Enum.reduce(ets, {[], []}, fn {_, opts, _} = table, {heired, rest} ->
       if Enum.member?(opts, {:heir, :peeper}),
@@ -140,6 +144,7 @@ defmodule Peeper.State do
     end)
   end
 
+  @spec fix_peeper_heirs([{:ets.tid(), term()} | ets_dump()], pid()) :: [{:ets.tid(), term()}]
   defp fix_peeper_heirs(heired_ets, pid) do
     Enum.map(heired_ets, fn
       {tid, heir_data} ->
