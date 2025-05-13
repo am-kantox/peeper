@@ -94,14 +94,9 @@ defmodule Peeper.MixProject do
 
   defp description do
     """
-    Peeper is an Elixir library that provides a GenServer-like API with automatic state preservation between crashes.
+    Peeper is an Elixir library that provides a `GenServer`-like API with automatic state preservation between crashes.
 
-    It enables you to embrace the "Let It Crash" philosophy while maintaining valuable state, supporting:
-    - Transparent state recovery after process crashes
-    - ETS table preservation between restarts
-    - Process dictionary persistence
-    - State change listeners for monitoring
-    - Process migration between supervisors (including remote nodes)
+    It enables you to embrace the “Let It Crash” philosophy while maintaining valuable state, supporting state/dictionary/ets recovery between crashes.
     """
   end
 
