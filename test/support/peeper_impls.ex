@@ -25,7 +25,11 @@ defmodule Peeper.Impls.Full do
   use Peeper.GenServer, listener: Peeper.Impls.Listener
 
   @impl Peeper.GenServer
-  def init(state), do: {:ok, state}
+  def init(state) do
+    name = :all_ets
+    {:noreply, state} = handle_cast({:create_ets, name}, state)
+    {:ok, state}
+  end
 
   @impl Peeper.GenServer
   def handle_info(:inc, state), do: {:noreply, state + 1}
@@ -47,9 +51,11 @@ defmodule Peeper.Impls.Full do
 
   @impl Peeper.GenServer
   def handle_cast({:create_ets, name}, state) do
-    name
-    |> :ets.new([:named_table, :ordered_set])
-    |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])
+    with :undefined <- :ets.info(name) do
+      name
+      |> :ets.new([:named_table, :ordered_set])
+      |> :ets.insert([{:a, 42}, {:b, :foo}, {:c, 42, :foo}])
+    end
 
     {:noreply, state}
   end

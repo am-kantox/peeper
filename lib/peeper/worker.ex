@@ -267,7 +267,7 @@ defmodule Peeper.Worker do
   defp dump_ets(%{supervisor: sup, keep_ets: keep_ets}) do
     Enum.flat_map(:ets.all(), fn table ->
       info = :ets.info(table)
-      name = Keyword.fetch!(info, :name)
+      name = Keyword.get(info, :name)
 
       if Keyword.fetch!(info, :owner) == self() and
            (keep_ets == :all or keep_ets == true or (is_list(keep_ets) and name in keep_ets)),
